@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 运行时产物
+save*.json
+settings.json
+启动日志.txt
+*.log
+
+# 系统/编辑器
+.DS_Store
+._*
+.vscode/
+.idea/
+
+# 素材备份（体积大，不入库）
+assets/apartment_before_corridor.png
+assets/walkmask_preview.png
+assets/comic/_原始生成图/
+assets/comic/_预览/
