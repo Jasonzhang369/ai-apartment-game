@@ -1,0 +1,80 @@
+name: Release
+
+# 推 v* 标签时自动打包并发布 Release（用 Actions 内置 token，无需额外密钥）
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的标签名（如 v61.0）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出完整历史
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 确定标签
+        id: t
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "发布标签：$TAG"
+
+      - name: 打包（git archive，保持文件权限与换行符）
+        run: |
+          TAG="${{ steps.t.outputs.tag }}"
+          NAME="AI中转站-${TAG}-免安装"
+          git archive --format=zip --prefix="${NAME}/" -o "${NAME}.zip" "$TAG"
+          ls -lh "${NAME}.zip"
+          echo "ZIP=${NAME}.zip" >> "$GITHUB_ENV"
+
+      - name: 生成发布说明
+        run: |
+          cat > notes.md <<'EOF'
+          ## AI 中转站 · 像素风 AI API 中转站经营游戏
+
+          **下载下面的 `AI中转站-*-免安装.zip`，解压后按包内「如何开始.txt」操作即可。**
+
+          ### 三步开玩
+          1. 装 Python 3.10+（Windows 安装时勾选 *Add Python to PATH*）
+          2. `pip install pygame`
+          3. macOS 双击 `启动游戏.command`；Windows 双击 `启动游戏.bat`（会自动装 pygame）
+
+          > 若 macOS 提示「无法打开，因为来自身份不明的开发者」：右键点 `启动游戏.command` → 选「打开」→ 再点「打开」。
+
+          ### 说明
+          - **本包不含背景音乐**（版权原因）。把任意 mp3 / flac 放进 `assets/music/` 就会循环播放，没有也能正常玩。
+          - 存档 `save.json`、设置 `settings.json` 都在游戏目录下，自动保存。
+          - 详细玩法与更新记录见仓库根目录的 `README.md`。
+
+          ### 其他下载方式
+          也可以用右侧的 *Source code (zip)* ——内容相同，只是没有整理好的顶层文件夹名。
+          EOF
+          echo "说明已生成"
+
+      - name: 创建 / 更新 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.t.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release 已存在，上传（覆盖）资产"
+            gh release upload "$TAG" "$ZIP" --clobber
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" "$ZIP" \
+              --title "AI 中转站 ${TAG}" \
+              --notes-file notes.md
+          fi
+          echo "=== 完成 ==="
+          gh release view "$TAG"
