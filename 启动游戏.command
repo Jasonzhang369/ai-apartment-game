@@ -7,7 +7,10 @@ cd "$(dirname "$0")" || exit 1
 MY_TTY=$(tty 2>/dev/null)
 LOG="$PWD/启动日志.txt"
 
-CANDIDATES=(
+# 想指定解释器：PYTHON=/path/to/python3 ./启动游戏.command
+CANDIDATES=()
+[ -n "$PYTHON" ] && CANDIDATES+=("$PYTHON")
+CANDIDATES+=(
   "$(command -v python3)"
   "/opt/homebrew/bin/python3"
   "/usr/local/bin/python3"
@@ -16,6 +19,11 @@ CANDIDATES=(
   "$(command -v python3.12)"
   "$(command -v python3.11)"
 )
+# 兜底：不在 PATH 里的独立 Python（pyenv、各种 App 自带的运行时等）
+for _extra in "$HOME"/.pyenv/versions/*/bin/python3 \
+              "$HOME"/.workbuddy/binaries/python/versions/*/bin/python3; do
+  [ -x "$_extra" ] && CANDIDATES+=("$_extra")
+done
 
 PY=""
 for p in "${CANDIDATES[@]}"; do
