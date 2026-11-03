@@ -90,7 +90,8 @@ def main():
     check('订阅专业档不会自动变大模型', ds.is_small() and ds.blocked('vision'))
     money1 = g.money
     g.upgrade_big(ds)
-    check('单独升级大模型花了钱', abs((money1 - g.money) - 1200) < 1e-6)
+    check('单独升级大模型花了钱',
+          abs((money1 - g.money) - ds.m.get('big_price', 1200)) < 1e-6)
     check('升级后不再是��模型', not ds.is_small())
     check('升级后能接识图画图', not ds.blocked('vision') and not ds.blocked('image'))
     check('升级后质量仍低于旗舰线',

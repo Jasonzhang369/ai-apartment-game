@@ -63,10 +63,10 @@ def main():
     g.warehouse['food'] = 0
     g.fuel = 0.0
     g.pending_supply = ['food', 'fuel']
-    g.day = 6
+    g.day = game.SUPPLY_EVERY - 1
     g.end_day()
-    check('第 7 天补给车到货：食材 +10', g.warehouse['food'] == 10)
-    check('第 7 天补给车到货：燃料 +30', g.fuel >= 30)
+    check('补给日到货：食材 +10', g.warehouse['food'] == 10)
+    check('补给日到货：燃料 +30', g.fuel >= 30)
     check('到货后车上清空', g.pending_supply == [])
 
     print('\n【公寓里别乱点】')

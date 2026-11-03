@@ -38,7 +38,7 @@ HOUR_START, HOUR_END = 8, 24   # 一天从 08:00 开到次日 08:00，24:00 结�
 DAY_HOURS = 24
 NIGHT_START, NIGHT_END = 23, 8   # 夜班时段：额度消耗打对折
 NIGHT_COST = 0.5
-TOTAL_DAYS = 30
+TOTAL_DAYS = 45
 QUOTA_MIN = 30             # 额度低于这个数就算"今天跑不动了"
 QUOTA_REF = 3.9            # 算力基准：活越重、算力越低，扣的额度越多（跟着 SPEED_K 一起抬，单子成本不变）
 
@@ -265,7 +265,7 @@ MODELS = [
     dict(id='DeepSeek', name='DeepSeek', spd=3.2, q=0.820, cost=0.085,
          tags=['reason', 'code'], color=(96, 168, 255), unlock=0, reset=150,
          tiers=[('基础', 0, 210), ('标准', 35, 540), ('专业', 60, 1140)],
-         low='DeepSeekChan', swap_sprite=True, big_price=1200,
+         low='DeepSeekChan', swap_sprite=True, big_price=700,
          small_block=('image', 'vision'), qdisc=0.80,
          blurb='初始线路，额度消耗比标称少 20%；还能单独升级成大模型'),
     dict(id='Qwen', name='Qwen', spd=3.0, q=0.800, cost=0.095,
@@ -635,7 +635,8 @@ GEAR_SHOP_RECT_ST = pygame.Rect(0, 0, 0, 0)          # 装备店并进仓库了
 SHOP_RECT_ST = pygame.Rect(10, 470, 173, 168)
 APT_POS_ST = (112, 0)                 # station.png 720x704 摆在场景中间（16 的整数倍）
 STATION_MASK = os.path.join(ROOT, 'assets', 'walkmask_station.json')
-RELOCATE_COST = 5000
+SUPPLY_EVERY = 3             # 补给每 3 天到一次
+RELOCATE_COST = 2500
 RELOCATE_DAY = 5                  # 攒够这么多钱才能搬去南极
 POLAR_DAY = 12
 QUEST_COOLDOWN = 8.0          # 同一种科考任务至少隔 8 小时
@@ -1253,6 +1254,55 @@ class Task:
 
 
 # ---------------------------------------------------------------- 背景音乐
+class Sfx:
+    """极简音效：用正弦/方波现场合成，不依赖素材文件。"""
+
+    def __init__(self):
+        self.ok = False
+        self.sounds = {}
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(22050, -16, 1, 512)
+            self._build()
+            self.ok = True
+        except Exception:
+            self.ok = False
+
+    def _tone(self, freq, ms, vol=0.25, kind='sin'):
+        import array, math
+        rate = 22050
+        n = int(rate * ms / 1000)
+        buf = array.array('h')
+        for i in range(n):
+            t = i / rate
+            env = min(1.0, i / 80) * max(0.0, 1.0 - i / n)
+            if kind == 'square':
+                v = 1.0 if math.sin(2 * math.pi * freq * t) > 0 else -1.0
+            else:
+                v = math.sin(2 * math.pi * freq * t)
+            buf.append(int(max(-1, min(1, v)) * env * vol * 32767))
+        return pygame.mixer.Sound(buffer=buf.tobytes())
+
+    def _build(self):
+        self.sounds = dict(
+            click=self._tone(660, 45, 0.18),
+            ok=self._tone(880, 90, 0.22),
+            coin=self._tone(1180, 120, 0.22),
+            fail=self._tone(180, 180, 0.25, 'square'),
+            meal=self._tone(520, 140, 0.20),
+        )
+
+    def play(self, name):
+        if not self.ok:
+            return
+        try:
+            snd = self.sounds.get(name)
+            if snd is not None:
+                snd.play()
+        except Exception:
+            pass
+
+
 class Music:
     """背景音乐：assets/music/ 里放一首就自动循环播放。
 
@@ -1494,6 +1544,7 @@ class Game:
         self.away_paused = False      # 是不是因为切到桌面而自动暂停的
         self.frame_i = 0              # 主循环帧计数（启动时跳过焦点检查）
         self.music = Music(self.settings)
+        self.sfx = Sfx()
         if self.fullscreen:
             self.apply_display()
         icon = os.path.join(ROOT, 'assets', 'models', 'DeepSeek.png')
@@ -1580,7 +1631,6 @@ class Game:
     def can_relocate(self):
         return (self.scene == 'apartment' and self.money >= RELOCATE_COST
                 and self.day >= RELOCATE_DAY and self.big_ready()
-                and all(x.unlocked for x in self.stations)   # 所有人都解锁
                 and self.day >= getattr(self, 'relocate_snooze', 0))
 
     def relocate(self):
@@ -1588,13 +1638,15 @@ class Game:
         if not self.can_relocate():
             return False
         self.money -= RELOCATE_COST
+        if self.rewards:                 # 公寓没领的奖励，搬迁时直接算给你，别卡住南极目标
+            self.claim_rewards()
         self.set_scene('station')
         self.toast_msg('搬进了南极科考站 · 新机房已通电', C_GOLD, 4.0)
         self.log(f'搬到南极科考站，搬迁费 ¥{RELOCATE_COST}', C_GOLD)
         self.log('房子退了，8 条线路和装备都装箱运过来了', (180, 190, 210))
-        self.panel = None
-        if INTRO_ON:
-            self.show_comic([3], to_intro=True)   # 第 4 幕：抵达
+        self.panel = ('stage', self.stage_stats())   # 公寓阶段结算
+        if not INTRO_ON:
+            self.panel = None
         self.save()
         return True
 
@@ -1777,6 +1829,13 @@ class Game:
         self.pending_intro = False        # 放完漫画接指南
         self.comic2_done = False          # 「越做越大」放过没
         self.comic3_done = False          # 「一张船票」放过没
+        self.south_step = 0               # 南极阶段主线进度
+        self.south_weather = 0            # 南极累计完成的气象任务
+        self.south_ice = 0                # 南极累计完成的冰样任务
+        self.south_days = 0               # 在南极撑过的天数
+        self.weather_ev = None            # 当前随机事件 (kind, 结束天)
+        self.loan = 0.0                   # 银行欠款
+        self.ach_seen = set()             # 已解锁成就（只用于弹提示）
         self.cutscene = None              # 新线路搬进来的演出
         self.rest_left = 0.0              # 剩余休息小时
         self.daily_goals = []             # 今日小目标
@@ -1935,6 +1994,10 @@ class Game:
             last_stars=self.last_stars[-12:],
             breakfast_day=self.breakfast_day,
             main_step=self.main_step, rewards=self.rewards,
+            south_step=self.south_step, south_weather=self.south_weather,
+            south_ice=self.south_ice, south_days=self.south_days,
+            loan=round(self.loan, 1), weather_ev=self.weather_ev,
+            ach=sorted(self.ach_seen),
             comic2=self.comic2_done, comic3=self.comic3_done,
             ice_runs=self.ice_runs, ice_done=self.ice_done,
             weather=self.weather, and_weather_at=self.weather_at,
@@ -2015,6 +2078,14 @@ class Game:
         self.last_stars = [int(x) for x in (d.get('last_stars') or [])][-12:]
         self.breakfast_day = int(d.get('breakfast_day', -1))
         self.main_step = int(d.get('main_step', 0))
+        self.south_step = int(d.get('south_step', 0))
+        self.south_weather = int(d.get('south_weather', 0))
+        self.south_ice = int(d.get('south_ice', 0))
+        self.south_days = int(d.get('south_days', 0))
+        self.loan = float(d.get('loan', 0.0))
+        ev = d.get('weather_ev')
+        self.weather_ev = tuple(ev) if isinstance(ev, (list, tuple)) and len(ev) == 2 else None
+        self.ach_seen = set(d.get('ach') or [])
         self.rewards = [tuple(x) for x in (d.get('rewards') or [])]
         self.comic2_done = bool(d.get('comic2', False))
         self.comic3_done = bool(d.get('comic3', False))
@@ -2256,7 +2327,7 @@ class Game:
         if self.scene == 'station':
             # 科考站没有现货店：下单，随下一批补给车到
             self.pending_gear.append(g['id'])
-            left = max(0, 7 - self.day % 7) if self.day % 7 else 0
+            left = max(0, SUPPLY_EVERY - self.day % SUPPLY_EVERY) if self.day % SUPPLY_EVERY else 0
             self.log(f'订了 {g["name"]}（¥{g["price"]}），随下批补给到（{left} 天后）', C_GOLD)
             self.toast_msg(f'{g["name"]} 已下单 · {left} 天后随补给到', C_GOLD, 2.6)
         else:
@@ -2723,6 +2794,39 @@ class Game:
         pygame.draw.rect(s, (236, 200, 130), b, 2, border_radius=6)
         txt(s, '知道了', b.centerx, b.y + 12, 18, (255, 236, 200), 'midtop', bold=True)
 
+    LOAN_RATE = 0.02          # 每天 2% 利息
+    LOAN_CAP = 5000
+
+    def borrow(self, amount):
+        if self.loan + amount > self.LOAN_CAP:
+            self.toast_msg(f'最多能借 ¥{self.LOAN_CAP:,}', C_DIM)
+            return False
+        self.loan += amount
+        self.money += amount
+        self.log(f'向银行借了 ¥{amount:,}（每天 {int(self.LOAN_RATE * 100)}% 利息）', C_GOLD)
+        self.toast_msg(f'银行放款 ¥{amount:,}', C_GOLD, 2.4)
+        return True
+
+    def repay_loan(self):
+        if self.loan <= 0:
+            self.toast_msg('没有欠款', C_DIM)
+            return False
+        pay = min(self.loan, max(0.0, self.money))
+        if pay <= 0:
+            self.toast_msg('没钱还', C_RED)
+            return False
+        self.money -= pay
+        self.loan -= pay
+        self.log(f'还了银行 ¥{pay:,.0f}，还欠 ¥{self.loan:,.0f}', (150, 210, 170))
+        self.toast_msg(f'还款 ¥{pay:,.0f}', (150, 210, 170), 2.2)
+        return True
+
+    def loan_buttons(self):
+        r = self.storage_rect()
+        return [('b1000', pygame.Rect(r.x + 30, r.bottom - 92, 120, 30)),
+                ('b3000', pygame.Rect(r.x + 160, r.bottom - 92, 120, 30)),
+                ('repay', pygame.Rect(r.x + 290, r.bottom - 92, 120, 30))]
+
     def storage_rect(self):
         return pygame.Rect(250, 96, 680, 540)
 
@@ -2776,7 +2880,7 @@ class Game:
                 '值班：留人不接单，每人每天省 3 单位燃料（最多算 2 人）。',
                 '配电柜：升级容量，避免协作大单跳闸。',
                 '三餐 6:30/11:30/17:30 开窗；早饭 7 点；缺饭当天减速，吃到下一顿恢复。',
-                '物资和装备都在主控屏下单，随补给车 7 天到一次。',
+                '物资和装备都在主控屏下单，随补给车 3 天到一次。',
             ]),
             ('科考站 · 人和状态', [
                 '疲劳：干活会累，到 85% 会自己回宿舍睡；做饭、抓鱼、照顾温室也涨。',
@@ -2828,6 +2932,51 @@ class Game:
         self.comic_i = 0
         self.pending_intro = to_intro
         self.panel = ('comic', self.comic_list[0])
+
+    def stage_stats(self):
+        hist = getattr(self, 'history', []) or []
+        rev = sum(h.get('rev', 0) for h in hist)
+        net = sum(h.get('net', 0) for h in hist)
+        orders = sum(getattr(st, 'done', 0) for st in self.stations)
+        money = self.net_worth()
+        score = money + self.rep * 60 + self.main_step * 250
+        if score >= 19000:
+            grade, word = 'S', '公寓阶段打得很漂亮'
+        elif score >= 14000:
+            grade, word = 'A', '稳扎稳打，盘子铺开了'
+        elif score >= 9000:
+            grade, word = 'B', '活下来了，还有得赚'
+        else:
+            grade, word = 'C', '勉强维持，但撑到了南极'
+        return dict(days=self.day, rev=rev, net=net, orders=orders,
+                    worth=money, rep=self.rep, grade=grade, word=word)
+
+    def draw_stage_panel(self, d):
+        s = self.screen
+        alpha_rect(s, pygame.Rect(0, 0, SW, SH), (4, 5, 10, 200))
+        r = pygame.Rect(SW // 2 - 300, SH // 2 - 200, 600, 400)
+        alpha_rect(s, r, (18, 22, 30, 250), 10)
+        pygame.draw.rect(s, (150, 210, 220), r, 2, border_radius=10)
+        txt(s, '公寓阶段 · 结算', r.centerx, r.y + 26, 22, (176, 232, 240),
+            'midtop', bold=True)
+        txt(s, d['word'], r.centerx, r.y + 58, 13, (160, 170, 190), 'midtop')
+        txt(s, d['grade'], r.centerx, r.y + 84, 72, C_GOLD, 'midtop', bold=True)
+        rows = [
+            ('经营天数', f"{d['days']} 天"),
+            ('成交单数', f"{d['orders']} 单"),
+            ('累计营收', f"¥{d['rev']:,.0f}"),
+            ('累计净利', f"¥{d['net']:,.0f}"),
+            ('净资产', f"¥{d['worth']:,.0f}"),
+            ('声誉', f"{d['rep']:.0f}"),
+        ]
+        y = r.y + 190
+        for i, (k, v) in enumerate(rows):
+            col = i % 2
+            yy = y + (i // 2) * 34
+            txt(s, k, r.x + 70 + col * 260, yy, 12, (140, 148, 170))
+            txt(s, v, r.x + 160 + col * 260, yy - 2, 15, (226, 232, 246), bold=True)
+        txt(s, '点击进入南极科考站', r.centerx, r.bottom - 44, 13, (150, 200, 210),
+            'midtop', bold=True)
 
     def comic_image(self, idx):
         """如果放了 assets/comic/panel{n}.png 就用它，否则退回程序画的简笔画。"""
@@ -2907,7 +3056,7 @@ class Game:
         alpha_rect(s, r, (18, 22, 30, 248), 10)
         pygame.draw.rect(s, (196, 170, 120), r, 2, border_radius=10)
         txt(s, '仓库 · 库存与背包', r.x + 28, r.y + 20, 24, (240, 212, 150), bold=True)
-        left = max(0, 7 - self.day % 7) if self.day % 7 else 0
+        left = max(0, SUPPLY_EVERY - self.day % SUPPLY_EVERY) if self.day % SUPPLY_EVERY else 0
         txt(s, f'下一批补给 {left} 天后', r.right - 28, r.y + 26, 12,
             (170, 180, 200), 'topright')
 
@@ -2950,6 +3099,16 @@ class Game:
                 (250, 230, 180), 'topright', bold=True)
             txt(s, short[:6], box.centerx, box.bottom - 16, 8, col, 'midtop')
 
+        for key, b in self.loan_buttons():
+            hov = b.collidepoint(self.mouse)
+            alpha_rect(s, b, (44, 40, 26) if hov else (28, 26, 20), 5)
+            pygame.draw.rect(s, (200, 176, 120), b, 1, border_radius=5)
+            label = {'b1000': '借 ¥1,000', 'b3000': '借 ¥3,000',
+                     'repay': '还款'}[key]
+            txt(s, label, b.centerx, b.centery, 12, (240, 220, 170), 'center', bold=True)
+        txt(s, f'银行欠款 ¥{self.loan:,.0f} · 每天 {int(self.LOAN_RATE * 100)}% 利息',
+            r.x + 30, r.bottom - 116, 11,
+            C_RED if self.loan > 0 else (150, 160, 180))
         txt(s, '购买都在主控屏下单；装备是耐用品，装上一直生效。',
             r.centerx, r.bottom - 30, 11, (120, 128, 148), 'midtop')
         cb = self.close_btn(r)
@@ -3059,6 +3218,15 @@ class Game:
                 self.toast_msg(f'{st.m["name"]} 搬进来了 · 大家都来打了招呼', C_GREEN, 2.6)
 
     def click_storage(self, mx, my):
+        for key, b in self.loan_buttons():
+            if b.collidepoint(mx, my):
+                if key == 'b1000':
+                    self.borrow(1000)
+                elif key == 'b3000':
+                    self.borrow(3000)
+                else:
+                    self.repay_loan()
+                return
         if self.close_btn(self.storage_rect()).collidepoint(mx, my):
             self.panel = None
             return
@@ -3398,6 +3566,8 @@ class Game:
         star = self.rate(q, match)
         rev = g.budget * self.price_mult * (REV_BASE + star * REV_PER_STAR)
         cost = g.w * st.unit_cost()
+        if self.event_kind() == 'spike':
+            cost *= 1.25                     # 上游涨价事件
         net = rev - cost
         self.money += net
         self.t_rev += rev
@@ -3432,6 +3602,10 @@ class Game:
         g.station = None
         g.fade = 0
         # 特效
+        try:
+            self.sfx.play('coin')
+        except Exception:
+            pass
         self.texts.append([st.cx, st.feet - 58, f'+{net:.0f}', 14, C_GOLD, 1.1])
         for _ in range(10):
             self.particles.append(dict(
@@ -3652,6 +3826,10 @@ class Game:
         return int(520 * (self.breaker_lv ** 1.4))
 
     def trip(self):
+        try:
+            self.sfx.play('fail')
+        except Exception:
+            pass
         """过载太久：跳闸。电路上的活全废，豆包自己那台照跑。"""
         self.tripped = 5.0
         self.overload_t = 0.0
@@ -3703,6 +3881,25 @@ class Game:
         self.toast_msg(f'早餐到岗 · 全员 +10%（{fmt_sec_game(BREAKFAST_SEC)}）',
                        (232, 190, 120))
         self.panel = None
+
+    def social_event(self):
+        """每天小概率发生一次人际小事：合得来的一起吃夜宵，合不来的拌嘴。"""
+        if random.random() > 0.35:
+            return
+        live = [x for x in self.stations if x.unlocked and not x.no_fatigue]
+        if len(live) < 2:
+            return
+        a, b = random.sample(live, 2)
+        key = tuple(sorted((a.m['id'], b.m['id'])))
+        if key == ('ChatGPT', 'Grok'):
+            return
+        v = self.bonds.get(key, 0.0)
+        if v >= 0.6:
+            self.bonds[key] = min(1.0, v + 0.04)
+            self.log(f'{a.m["name"]} 和 {b.m["name"]} 一起吃了顿夜宵，关系更近了', (238, 170, 190))
+        elif v <= 0.15:
+            self.bonds[key] = max(-1.0, v - 0.05)
+            self.log(f'{a.m["name"]} 和 {b.m["name"]} 因为排班拌了几句嘴', (210, 150, 150))
 
     def roll_event(self):
         if self.event:
@@ -3802,6 +3999,8 @@ class Game:
             self.build_daily_goals()
         self.check_daily_goals()
         self.update_main_quest()
+        self.check_achievements()
+        self.update_south_quest()
         if INTRO_ON and self.state == 'play' and not self.panel:
             if (not self.comic2_done and self.scene == 'apartment'
                     and self.day <= 12
@@ -4297,6 +4496,7 @@ class Game:
             self.weather[idx] = 3
             self.money += 60
             self.rep = min(100.0, self.rep + 0.3)
+            self.south_weather += 1
             self.log(f'第 {idx + 1} 趟气象数据上传成功 · ¥60', C_GOLD)
             self.toast_msg('气象数据上传 +¥60', C_GOLD, 2.4)
         elif kind == 'ice':
@@ -4305,6 +4505,7 @@ class Game:
                 self.ice_done = self.day
             self.money += 300
             self.rep = min(100.0, self.rep + 2.0)
+            self.south_ice += 1
             self.log('冰样结果上传成功 · 奖金 ¥300，声誉 +2', C_GOLD)
             self.toast_msg('冰样上传成功 · ¥300', C_GOLD, 3.0)
         elif kind == 'green':
@@ -4489,21 +4690,24 @@ class Game:
         self.log(f'千问的{meal}做好了：{n} 条线疲劳 -{pct}%、'
                  f'速度 +{int(MEAL_BUFF * 100)}%（{fmt_sec_game(MEAL_BUFF_SEC)}）',
                  C_GOLD)
+        try:
+            self.sfx.play('meal')
+        except Exception:
+            pass
         self.toast_msg(f'{meal}好了 · 全站疲劳 -{pct}% / '
                        f'速度 +{int(MEAL_BUFF * 100)}%', C_GOLD, 3.0)
         self.walk_home(s)
         s.social_timer = random.uniform(20.0, 40.0)
 
     def start_fishing(self):
-        """没食材时：DeepSeek 去气闸外凿冰抓鱼。"""
+        """没食材时：DeepSeek 去气闸外凿冰抓鱼（只有科考站，公寓没有冰窟窿）。"""
+        if self.scene != 'station':
+            return False
         ds = self.station_by_id('DeepSeek')
         if ds is None or not (ds.unlocked and ds.subscribed):
             return False
         if ds.fish > 0 or ds.social_state == 'fish' or ds.jobs():
             return False
-        if self.scene == 'apartment':
-            ds.walk_path = self.walk_route(ds.at_key, (ds.px, ds.feet), 'BALCONY',
-                                           DOORS.get('BALCONY', (ds.px, ds.feet)))
         ds.fish = 30 / GAME_MIN_PER_SEC
         ds.social_state = 'fish'
         ds.chat_line = ''
@@ -5036,14 +5240,29 @@ class Game:
         self.log(f'第 {self.day} 天结算 ¥{net:+.0f}，额度已刷新', C_BLUE)
         self.toast_msg(f'第 {self.day} 天结算 {net:+.0f}', C_GOLD if net >= 0 else C_RED, 3.2)
 
+        if self.weather_ev and self.day > self.weather_ev[1]:
+            name = self.EVENTS[self.weather_ev[0]][0]
+            self.weather_ev = None
+            for st in self.stations:
+                st.limited = False
+            self.log(f'{name}过去了，一切恢复正常', (150, 210, 170))
+        self.social_event()
+        if self.loan > 0:
+            interest = self.loan * self.LOAN_RATE
+            self.loan += interest
+            self.money -= interest
+            self.log(f'银行利息 {interest:,.0f}（欠 ¥{self.loan:,.0f}）', (210, 170, 140))
         self.burn_fuel()
         self.quest_day_end()
         if self.scene == 'station' and self.meals_today >= 3:
             self.log('三餐都吃了，状态不错', (150, 210, 170))
         self.check_contract_end()
         self.day += 1
+        if self.scene == 'station':
+            self.south_days += 1
+            self.roll_event()
         self.build_daily_goals()
-        if self.day % 7 == 0:
+        if self.day % SUPPLY_EVERY == 0:
             self.deliver_supply()      # 补给：每 7 天来一次（装备也随车到）
         self.t_rev = 0.0
         self.t_cost = 0.0
@@ -5125,8 +5344,8 @@ class Game:
         return out
 
     def next_supply_day(self):
-        """下一次补给船靠岸的日子（7 天一趟）。"""
-        return max(1, ((self.day - 1) // 7 + 1) * 7)
+        """下一次补给车靠岸的日子（3 天一趟）。"""
+        return max(1, ((self.day - 1) // SUPPLY_EVERY + 1) * SUPPLY_EVERY)
 
     def buy_supply(self, kind):
         item = next((x for x in self.supply_items() if x[0] == kind), None)
@@ -5219,6 +5438,8 @@ class Game:
         burn = max(2.0, 5.0 + 1.6 * live - 3.0 * min(2, duty))
         if getattr(self, 'polar', False):
             burn *= POLAR_FUEL
+        if self.event_kind() == 'blizzard':
+            burn *= 1.25
         return burn
 
     def burn_fuel(self):
@@ -5375,6 +5596,8 @@ class Game:
                 elif key == 'bag':
                     self.panel = ('storage', None)   # 背包并进仓库了
                     self.held_item = None
+                elif key == 'ach':
+                    self.panel = ('achieve', None)
                 elif key == 'guide':
                     self.panel = ('intro', 'station' if self.scene == 'station' else 'apt')
                 elif key == 'settings':
@@ -5472,6 +5695,14 @@ class Game:
 
     def click_panel(self, mx, my):
         kind, data = self.panel
+        if kind == 'achieve':
+            self.panel = None
+            return
+        if kind == 'stage':
+            self.panel = None
+            if INTRO_ON and self.scene == 'station':
+                self.show_comic([3], to_intro=True)
+            return
         if kind == 'comic':
             self.comic_i += 1
             if self.comic_i < len(self.comic_list):
@@ -5927,7 +6158,7 @@ class Game:
         """右下角的雪地补给车：看订单和下一趟。"""
         if self.scene != 'station':
             return False
-        left = max(0, 7 - self.day % 7) if self.day % 7 else 0
+        left = max(0, SUPPLY_EVERY - self.day % SUPPLY_EVERY) if self.day % SUPPLY_EVERY else 0
         n = len(self.pending_supply)
         if n:
             self.toast_msg(f'补给车：车上 {n} 件货，下次靠岸 {left} 天后', (200, 220, 180), 3.0)
@@ -6852,6 +7083,7 @@ class Game:
         lab = font(11, True).render(nm, True, col)
         pw, ph = lab.get_width() + 13, 16
         px_, py_ = self.name_plate_pos(s)
+        py_ += (s.idx % 2) * 9          # 奇数位下移，减少重叠
         plate = pygame.Surface((pw, ph), pygame.SRCALPHA)
         pygame.draw.rect(plate, (8, 9, 15, 232), plate.get_rect(), border_radius=4)
         pygame.draw.rect(plate, edge, plate.get_rect(), 1, border_radius=4)
@@ -6905,7 +7137,8 @@ class Game:
         elif s.limited:
             self.pill(s.px, feet - 84, f'限流 · 速度{THROTTLE_PCT}%', 9,
                       (240, 130, 110), bg=(26, 12, 12), pad=6)
-        elif s.fatigue > 0.60 and not s.jobs():
+        elif (s.fatigue > 0.60 and not s.jobs()
+              and s is self.tiredest()):
             self.pill(s.px, feet - 84, '有点累了 · 该歇会儿', 9,
                       (236, 200, 130), bg=(28, 24, 12), pad=6)
         elif s.jobs():
@@ -7004,6 +7237,10 @@ class Game:
             self.draw_heart(mx, my, size, (240, 118, 148) if v >= 0.8 else (214, 128, 160))
             if v >= 0.8:
                 self.draw_heart(mx, my - 11, size * 0.6, (250, 166, 186))
+
+    def tiredest(self):
+        cand = [x for x in self.stations if x.unlocked and x.fatigue > 0.60 and not x.jobs()]
+        return max(cand, key=lambda x: x.fatigue) if cand else None
 
     def draw_quest_bar(self, s, feet):
         """科考任务的进度条：不占额度、不升温，只占人。"""
@@ -7202,6 +7439,7 @@ class Game:
             ('bag', pygame.Rect(x, 656, 288, 26)),
             ('settings', pygame.Rect(x + 244, 10, 44, 22)),
             ('guide', pygame.Rect(x + 190, 10, 50, 22)),
+            ('ach', pygame.Rect(x + 136, 10, 50, 22)),
         ]
 
     MAIN = [
@@ -7233,6 +7471,119 @@ class Game:
         if step == 6:
             return self.day >= TOTAL_DAYS
         return True
+
+    SOUTH = [
+        ('安顿下来', '在南极完成 2 次气象任务', 600, 1.0),
+        ('采样循环', '完成 3 次冰样任务', 900, 1.0),
+        ('过冬', '在南极撑过 10 天', 1200, 2.0),
+        ('全速运转', '在线线路全部是大模型或已升满', 1500, 2.0),
+    ]
+
+    def south_done(self, step):
+        if step == 0:
+            return self.south_weather >= 2
+        if step == 1:
+            return self.south_ice >= 3
+        if step == 2:
+            return self.south_days >= 10
+        if step == 3:
+            live = [x for x in self.stations if x.unlocked and x.subscribed]
+            return bool(live) and all((x.big or not x.has_big()) for x in live)
+        return True
+
+    def update_south_quest(self):
+        """南极阶段主线：只在科考站推进，绝不与公寓主线混。"""
+        if self.scene != 'station' or self.rewards:
+            return
+        while self.south_step < len(self.SOUTH) and self.south_done(self.south_step):
+            _, title, money, rep = self.SOUTH[self.south_step]
+            self.south_step += 1
+            if money or rep:
+                self.rewards.append((title, money, rep))
+            self.log(f'南极目标完成：{title} · 奖励待领取', C_GOLD)
+            self.toast_msg(f'南极目标完成：{title} · 点「领取」', C_GOLD, 3.2)
+            break
+
+    EVENTS = {
+        'blizzard': ('暴风雪', '取暖烧得更凶（燃料 +25%），持续 2 天'),
+        'spike': ('上游涨价', '上游成本 +25%，持续 2 天'),
+        'fault': ('设备故障', '一条线路被限流，2 天后自愈'),
+    }
+
+    def roll_event(self):
+        """每 4 天左右掷一次随机事件（只在科考站）。"""
+        if self.scene != 'station' or self.weather_ev:
+            return
+        if self.day < 3 or random.random() > 0.45:
+            return
+        kind = random.choice(list(self.EVENTS))
+        self.weather_ev = (kind, self.day + 2)
+        name, desc = self.EVENTS[kind]
+        if kind == 'fault':
+            live = [x for x in self.stations if x.unlocked and x.subscribed and not x.no_fatigue]
+            if live:
+                random.choice(live).limited = True
+        self.log(f'突发：{name} · {desc}', (236, 170, 120))
+        self.toast_msg(f'突发：{name} · {desc}', (236, 170, 120), 3.2)
+
+    def event_kind(self):
+        if not self.weather_ev:
+            return None
+        kind, until = self.weather_ev
+        return kind if self.day <= until else None
+
+    ACHIEVEMENTS = [
+        ('first', '第一单', '完成 1 单', lambda g: sum(x.done for x in g.stations) >= 1),
+        ('hundred', '百单', '累计完成 100 单', lambda g: sum(x.done for x in g.stations) >= 100),
+        ('rich', '小富', '净资产 ≥ ¥20,000', lambda g: g.net_worth() >= 20000),
+        ('rep90', '口碑', '声誉 ≥ 90', lambda g: g.rep >= 90),
+        ('all_lines', '全员到齐', '10 条线路全部解锁', lambda g: all(x.unlocked for x in g.stations)),
+        ('big', '大模型', 'DeepSeek 与 GPT 都是大模型',
+         lambda g: bool(g.station_by_id('DeepSeek') and g.station_by_id('DeepSeek').big
+                        and g.station_by_id('ChatGPT') and g.station_by_id('ChatGPT').big)),
+        ('south', '南极', '搬进南极科考站', lambda g: g.scene == 'station'),
+        ('weather2', '气象站', '南极累计完成 2 次气象', lambda g: g.south_weather >= 2),
+        ('ice3', '冰芯', '南极累计完成 3 次冰样', lambda g: g.south_ice >= 3),
+        ('winter', '越冬', '在南极撑过 10 天', lambda g: g.south_days >= 10),
+    ]
+
+    def achievements(self):
+        return [(aid, name, desc, bool(fn(self))) for aid, name, desc, fn in self.ACHIEVEMENTS]
+
+    def check_achievements(self):
+        for aid, name, desc, ok in self.achievements():
+            if ok and aid not in self.ach_seen:
+                self.ach_seen.add(aid)
+                self.log(f'成就解锁：{name} —— {desc}', (250, 214, 140))
+                self.toast_msg(f'成就解锁 · {name}', (250, 214, 140), 2.8)
+
+    def draw_achievements_panel(self, data=None):
+        s = self.screen
+        alpha_rect(s, pygame.Rect(0, 0, SW, SH), (4, 5, 10, 185))
+        r = pygame.Rect(200, 90, 700, 540)
+        alpha_rect(s, r, (20, 22, 30, 248), 10)
+        pygame.draw.rect(s, (214, 186, 120), r, 2, border_radius=10)
+        rows = self.achievements()
+        got = sum(1 for *_, ok in rows if ok)
+        txt(s, '成就墙', r.centerx, r.y + 20, 22, (246, 222, 156), 'midtop', bold=True)
+        txt(s, f'{got} / {len(rows)}', r.centerx, r.y + 50, 12, (170, 160, 140), 'midtop')
+        y = r.y + 84
+        for aid, name, desc, ok in rows:
+            col = (240, 214, 150) if ok else (110, 116, 132)
+            txt(s, ('★ ' if ok else '☆ ') + name, r.x + 40, y, 15, col, bold=True)
+            txt(s, desc, r.x + 210, y + 2, 12,
+                (190, 190, 200) if ok else (110, 114, 126))
+            y += 40
+        txt(s, '点任意位置关闭', r.centerx, r.bottom - 30, 11, (140, 130, 150), 'midtop')
+        cb = self.close_btn(r)
+        pygame.draw.rect(s, (40, 44, 62), cb, border_radius=4)
+        txt(s, 'X', cb.centerx, cb.y + 7, 16, C_TEXT, 'midtop', bold=True)
+
+    def south_goal_text(self):
+        if self.south_step >= len(self.SOUTH):
+            return '南极阶段目标全部完成'
+        _, title, money, _ = self.SOUTH[self.south_step]
+        return title + (f'（奖励 ¥{money}）' if money else '')
 
     def update_main_quest(self):
         if self.rewards:                  # 还有没领的奖励：先别推进下一条
@@ -7304,6 +7655,8 @@ class Game:
 
     def current_goal(self):
         """给玩家一条当前该干什么的指引。"""
+        if self.scene == 'station':
+            return '南极目标：' + self.south_goal_text()
         return '主线：' + self.main_goal_text()
 
     def _old_goal_unused(self):
@@ -7373,6 +7726,13 @@ class Game:
             txt(s, f'休息中 · 还剩 {self.rest_left:.1f} 小时', x, 62, 11,
                 (170, 226, 190), bold=True)
 
+        # 成就
+        ab = dict(self.pane_buttons())['ach']
+        hov_ab = ab.collidepoint(self.mouse)
+        alpha_rect(s, ab, (38, 42, 60) if hov_ab else (24, 28, 42), 4)
+        pygame.draw.rect(s, (110, 126, 168) if hov_ab else (70, 80, 110), ab, 1, border_radius=4)
+        txt(s, '成就', ab.centerx, ab.y + 3, 11, (200, 200, 220) if hov_ab else (176, 186, 208), 'midtop')
+
         # 指南
         gb = dict(self.pane_buttons())['guide']
         hov_gb = gb.collidepoint(self.mouse)
@@ -7430,7 +7790,9 @@ class Game:
         pygame.draw.line(s, (40, 44, 62), (x, 198), (R, 198))
         txt(s, '定价', x, 206, 11, C_DIM)
         txt(s, f'×{self.price_mult:.2f}', x + 38, 201, 18, C_GOLD, bold=True)
-        txt(s, '客流随加价下降', x + 104, 207, 10, (100, 108, 132))
+        iv = self.spawn_interval()
+        est = (REV_BASE + 3 * REV_PER_STAR) * 1.1 * self.price_mult * 0.85
+        txt(s, f'{iv:.0f}秒/单 · 均单 ¥{est:.0f}', x + 104, 207, 9, (110, 130, 152))
 
         mx_, my_ = self.mouse
         for (key, r), label in zip(self.pane_buttons()[:4],
@@ -7643,6 +8005,10 @@ class Game:
             self.draw_breaker_panel()
         elif kind == 'gateway':
             self.draw_gateway_panel()
+        elif kind == 'achieve':
+            self.draw_achievements_panel(data)
+        elif kind == 'stage':
+            self.draw_stage_panel(data)
         elif kind == 'comic':
             self.draw_comic(data)
         elif kind == 'intro':

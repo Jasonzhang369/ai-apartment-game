@@ -8,13 +8,11 @@ MY_TTY=$(tty 2>/dev/null)
 LOG="$PWD/启动日志.txt"
 
 CANDIDATES=(
+  "/Users/zhangjiazheng/.workbuddy/binaries/python/versions/3.13.12/bin/python3"
   "$(command -v python3)"
   "/opt/homebrew/bin/python3"
   "/usr/local/bin/python3"
   "/usr/bin/python3"
-  "$(command -v python3.13)"
-  "$(command -v python3.12)"
-  "$(command -v python3.11)"
 )
 
 PY=""

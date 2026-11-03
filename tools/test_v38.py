@@ -83,10 +83,10 @@ def main():
     g.day = 3
     g.end_day()
     check('非补给日不送货', g.pending_supply == ['fuel'])
-    g.day = 6
+    g.day = game.SUPPLY_EVERY - 1
     g.money = 9000
-    g.end_day()          # day 6 -> 7，补给日
-    check('第 7 天补给船到货', g.pending_supply == [])
+    g.end_day()          # 补给日
+    check('补给日到货', g.pending_supply == [])
 
     # ------------------------------------------------ 仓库做饭
     print('\n【仓库食材】')

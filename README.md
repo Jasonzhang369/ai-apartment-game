@@ -4,25 +4,6 @@
 下游是网上源源不断发来的 AI 任务。你负责把任务派给合适的模型、跑算力、控成本、提价、扩线，
 撑过 30 天。
 
-![游戏主界面](screenshots/station.png)
-
-<p align="center">
-  <img src="screenshots/relations.png" width="49%" alt="人缘关系">
-  <img src="screenshots/guide-apartment.png" width="49%" alt="公寓分区说明">
-</p>
-
-## 快速开始
-
-```bash
-git clone https://github.com/Jasonzhang369/ai-apartment-game.git
-cd ai-apartment-game
-python3 -m pip install -r requirements.txt
-python3 game.py
-```
-
-macOS 也可以直接双击 `启动游戏.command`；Windows 双击 `启动游戏.bat`（会自动检查并安装 pygame）。
-只要一个依赖：`pygame`。Python 3.10+。
-
 场景是**公寓的俯视平面图**（1920×1280 的户型图按 0.55 缩放进 960×720 的场景区）：
 
 ```
@@ -213,18 +194,15 @@ DeepSeek 再打 8 折是 100。快到爆的线路更省额度，慢的线路既�
 或者在终端里直接跑（这种跑法窗口会一直留着）：
 
 ```bash
-cd ai-apartment-game
+cd "/Volumes/SSD/AI中转站像素游戏"
 python3 game.py
 ```
 
-依赖只有一个：`pygame`（`python3 -m pip install -r requirements.txt`）。
+依赖只有一个：`pygame`（`python3 -m pip install pygame`）。
 
 **背景音乐**：把歌丢进 `assets/music/` 就会自动循环播放（mp3 / ogg / wav / flac / m4a）。
-其他按文件名排序取第一首；放好之后重启游戏即可，音量在「设置」里调。
-
-> **仓库里没有附带任何音乐文件**（`.flac` 等已被 `.gitignore` 排除）。
-> 原来那首曲子版权归原作者，不适合随公开仓库分发；想听 BGM 请自己放一首进去，
-> 游戏会自动识别，**没有音乐也能正常玩**（只是静音）。
+文件名里带「大肥鱼」「let me go」或「fish」的优先，其他按文件名取第一首。
+放好之后重启游戏即可；音量在「设置」里调。
 
 ## 玩法
 

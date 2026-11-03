@@ -60,9 +60,9 @@ def main():
     check('下单成功', g.buy_gear(cpu) is True)
     check('没直接进背包', g.bag_count('cpu') == 0)
     check('进了在途清单', 'cpu' in g.pending_gear)
-    g.day = 6
+    g.day = game.SUPPLY_EVERY - 1      # 补给周期 3 天
     g.end_day()
-    check('第 7 天补给车送到', g.bag_count('cpu') == 1)
+    check('补给日送到', g.bag_count('cpu') == 1)
     check('在途清单清空', g.pending_gear == [])
 
     print('\n【装备店并进仓库】')

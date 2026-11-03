@@ -88,8 +88,9 @@ def main():
     qw.walk_path = []
     qw.cooking = 0.01
     g.update_cooking(qw, 0.05)
+    heal = game.MEAL_FATIGUE if g.scene == 'station' else 0.20
     check('做完后全站回疲劳',
-          all(abs(st.fatigue - (0.6 - game.MEAL_FATIGUE)) < 1e-6
+          all(abs(st.fatigue - (0.6 - heal)) < 1e-6
               for st in g.stations if st.unlocked and not st.no_fatigue))
     check('做完有速度加成', qw.meal > 0)
     check('速度确实变快', qw.spd() > spd_before)
