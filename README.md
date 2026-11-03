@@ -2,7 +2,26 @@
 
 像素风模拟经营小游戏。你接手一间夹在写字楼夹层里的 "AI 中转站"：上游是一排大模型线路，
 下游是网上源源不断发来的 AI 任务。你负责把任务派给合适的模型、跑算力、控成本、提价、扩线，
-撑过 30 天。
+撑过 45 天。
+
+![游戏主界面](screenshots/station.png)
+
+<p align="center">
+  <img src="screenshots/relations.png" width="49%" alt="人缘关系">
+  <img src="screenshots/guide-apartment.png" width="49%" alt="公寓分区说明">
+</p>
+
+## 快速开始
+
+```bash
+git clone https://github.com/Jasonzhang369/ai-apartment-game.git
+cd ai-apartment-game
+python3 -m pip install -r requirements.txt
+python3 game.py
+```
+
+macOS 也可以直接双击 `启动游戏.command`；Windows 双击 `启动游戏.bat`（会自动检查并安装 pygame）。
+只要一个依赖：`pygame`。Python 3.10+。
 
 场景是**公寓的俯视平面图**（1920×1280 的户型图按 0.55 缩放进 960×720 的场景区）：
 
@@ -122,7 +141,7 @@ ChatGPT ¥230、Claude ¥260。买到的卡**进背包、可以攒好几张**，
 基础来单是偏少的（一天十来单），嫌慢可以点右栏的「投广告 ¥220」：花一次钱包两天，
 期间来单间隔缩短近四成。手头紧的时候别硬投，房租还等着交。
 
-**越到后期，单子越大**：客户甩过来的活会一天比一天重（第 30 天大概是开局的 1.45 倍，
+**越到后期，单子越大**：客户甩过来的活会一天比一天重（上限是开局的 1.30 倍，第 26 天起封顶，
 偶尔还来一个「特大工程」），出价也跟着涨——但也更费额度、更费电，热得更快，
 慢线路扛不住大单就容易烧。
 
@@ -194,21 +213,24 @@ DeepSeek 再打 8 折是 100。快到爆的线路更省额度，慢的线路既�
 或者在终端里直接跑（这种跑法窗口会一直留着）：
 
 ```bash
-cd "/Volumes/SSD/AI中转站像素游戏"
+cd ai-apartment-game
 python3 game.py
 ```
 
-依赖只有一个：`pygame`（`python3 -m pip install pygame`）。
+依赖只有一个：`pygame`（`python3 -m pip install -r requirements.txt`）。
 
 **背景音乐**：把歌丢进 `assets/music/` 就会自动循环播放（mp3 / ogg / wav / flac / m4a）。
-文件名里带「大肥鱼」「let me go」或「fish」的优先，其他按文件名取第一首。
-放好之后重启游戏即可；音量在「设置」里调。
+文件名随便起，按文件名排序取第一首；放好之后重启游戏即可，音量在「设置」里调。
+
+> **仓库里没有附带任何音乐文件**（`.flac` 等已被 `.gitignore` 排除）。
+> 原来那首曲子版权归原作者，不适合随公开仓库分发；想听 BGM 请自己放一首进去，
+> 游戏会自动识别，**没有音乐也能正常玩**（只是静音）。
 
 ## 玩法
 
 一天 **5 分钟（300 秒）**，**08:00 开门到次日 08:00**：中间 **24:00 自动结账**（扣房租电费工资、刷新额度、
 天数 +1），结算**不弹窗、不打断手上的活、也不清待处理任务**，账目直接写进右栏「每日结算」。
-30 天为一个周期。
+45 天为一个周期。
 
 **核心循环**
 
@@ -530,7 +552,7 @@ game.py              主程序（全部逻辑与渲染）
 tools/map_editor.py  行走网格标注工具（涂墙 / 可走，存 assets/walkmask.json）
 工具-标注行走网格.command  双击打开标注工具
 tools/shot.py        无头渲染各界面截图，改画面后用它自检
-tools/sim.py         自动跑 30 天，打印每日账本，用来查数值平衡
+tools/sim.py         自动跑完整局（45 天），打印每日账本，用来查数值平衡
 tools/test_flow.py   点击链路自测（派单/升级/签约/结算/存读档）
 tools/test_v15.py    限流压力 / 摸鱼 / 冰箱零食 的专项自测
 tools/test_v16.py    早餐时段 / 电闸与豆包脱网 / GLM 昼夜 / 断活 的专项自测
@@ -574,7 +596,7 @@ python3 tools/test_v30.py                 # 87 项：存档位 / 设置模态 / 
 python3 tools/test_v29.py                 # 101 项：背包 / 拖拽 / 定价 / 连派 / 轨迹 / 掩码 A* / 存档
 python3 tools/map_editor.py --check        # 检查行走掩码（墙格数 / 连通性）
 python3 tools/shot.py /tmp/o              # 出 23 张界面截图
-python3 tools/sim.py                      # 30 天数值曲线
+python3 tools/sim.py                      # 整局数值曲线
 python3 tools/shot_walk.py --char GLM     # 游戏内踱步 GIF
 python3 tools/walk_preview.py --scale 0.6 # 比例测试（0.5 / 0.55 / 0.6 各试一遍）
 ```
